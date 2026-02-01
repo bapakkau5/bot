@@ -1,37 +1,25 @@
 // config.js
-function must(name) {
+function req(name) {
   const v = process.env[name];
-  if (!v || !String(v).trim()) {
-    throw new Error(`Missing env: ${name}`);
-  }
-  return String(v).trim();
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
 }
-
-function opt(name, fallback = "") {
-  const v = process.env[name];
-  return v ? String(v).trim() : fallback;
-}
-
-const OWNER_IDS = opt("OWNER_IDS", "")
-  .split(",")
-  .map(s => s.trim())
-  .filter(Boolean);
 
 module.exports = {
-  DISCORD_TOKEN: must("DISCORD_TOKEN"),
+  DISCORD_TOKEN: req("DISCORD_TOKEN"),
+  GUILD_ID: req("GUILD_ID"),
+  LIVE_CHANNEL_ID: req("LIVE_CHANNEL_ID"),
+  ANNOUNCE_CHANNEL_ID: req("ANNOUNCE_CHANNEL_ID"),
+  UNIVERSE_ID: req("UNIVERSE_ID"),
 
-  // Server & channel
-  GUILD_ID: must("GUILD_ID"),
-  LIVE_CHANNEL_ID: must("LIVE_CHANNEL_ID"),
-  ANNOUNCE_CHANNEL_ID: opt("ANNOUNCE_CHANNEL_ID", ""),
-
-  // Roblox
-  UNIVERSE_ID: must("UNIVERSE_ID"),
-
-  // Bot behavior
+  // Ubah ini kalau mau
   PREFIX: ";",
-  UPDATE_INTERVAL_MS: Number(opt("UPDATE_INTERVAL_MS", "60000")), // default 60 detik
+  SITE_LINK: "https://gunungroblox.my.id",
 
-  // Owner-only
-  OWNER_IDS
+  // Interval update live card (ms). Default 60 detik.
+  LIVE_UPDATE_INTERVAL: Number(process.env.LIVE_UPDATE_INTERVAL || 60000),
+
+  // Pesan DM welcome
+  WELCOME_DM: (username, link) =>
+    `Halo **${username}**! 👋\nSelamat datang di **Mount Veridia** ⛰️\nCek website: ${link}\n\nHave fun!`
 };
