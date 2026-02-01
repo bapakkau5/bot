@@ -6,221 +6,153 @@ const {
 } = require("discord.js");
 
 const cfg = require("./config");
-const roblox = require("./roblox");
+const {
+  getUniverseStats,
+  getRobloxUserByUsername,
+  getRobloxUserProfile,
+  getRobloxHeadshot
+} = require("./roblox");
+
+const { startLiveLoop } = require("./live");
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent // WAJIB untuk prefix command
+    GatewayIntentBits.GuildMembers,     // buat welcome DM
+    GatewayIntentBits.GuildMessages,    // prefix command
+    GatewayIntentBits.MessageContent,   // baca isi chat
+    GatewayIntentBits.GuildPresences    // aman aja, & biar ga crash kalo code butuh
   ],
   partials: [Partials.Channel]
 });
 
-let liveMessageId = null;
-let lastPlaying = null;
-
-function isOwner(userId) {
-  if (!cfg.OWNER_IDS.length) return false;
-  return cfg.OWNER_IDS.includes(String(userId));
+function isOwner(msg) {
+  return msg.guild && msg.author.id === msg.guild.ownerId;
 }
 
-function formatNumber(n) {
-  try { return Number(n).toLocaleString("en-US"); } catch { return String(n); }
+function fmt(n) {
+  if (typeof n !== "number") return "0";
+  return n.toLocaleString("en-US");
 }
 
-function makeStatusEmbed(info) {
+function statusEmbed(stats) {
   return new EmbedBuilder()
-    .setTitle(`🌋 ${info.name}`)
-    .setDescription("Live Status (auto update)")
+    .setTitle("Mount Veridia Status")
+    .setDescription(`**${stats.name}**`)
     .addFields(
-      { name: "🟢 Online sekarang", value: `**${formatNumber(info.playing)}**`, inline: true },
-      { name: "⭐ Favorites", value: `**${formatNumber(info.favorites)}**`, inline: true },
-      { name: "👀 Visits", value: `**${formatNumber(info.visits)}**`, inline: true },
-      { name: "👥 Max Players / Server", value: `**${formatNumber(info.maxPlayers)}**`, inline: true },
-      { name: "🆔 Universe ID", value: `\`${info.universeId}\``, inline: true },
-      { name: "🎮 Root Place ID", value: `\`${info.rootPlaceId}\``, inline: true }
+      { name: "Online sekarang", value: `${fmt(stats.playing)}`, inline: true },
+      { name: "Favorites", value: `${fmt(stats.favorites)}`, inline: true },
+      { name: "Visits", value: `${fmt(stats.visits)}`, inline: true }
     )
-    .setFooter({ text: "VERIDIA_BOT_LIVE_STATUS" })
+    .setURL(cfg.SITE_LINK)
+    .setFooter({ text: "Veridia Bot" })
     .setTimestamp(new Date());
 }
 
-async function getOrCreateLiveMessage(channel, embed) {
-  // Kalau sudah ada messageId di memori, coba edit
-  if (liveMessageId) {
-    try {
-      const msg = await channel.messages.fetch(liveMessageId);
-      await msg.edit({ embeds: [embed] });
-      return msg;
-    } catch {
-      liveMessageId = null;
-    }
+// ✅ Welcome DM (pas member join)
+client.on("guildMemberAdd", async (member) => {
+  try {
+    if (member.guild.id !== cfg.GUILD_ID) return;
+
+    const text = cfg.WELCOME_DM(member.user.username, cfg.SITE_LINK);
+    await member.send({ content: text });
+  } catch (e) {
+    // Banyak user matiin DM — ini normal, jangan crash
+    console.log("[WELCOME DM] gagal kirim DM:", e?.message || e);
   }
-
-  // Cari message lama yang dibuat bot, footer khusus
-  const msgs = await channel.messages.fetch({ limit: 25 }).catch(() => null);
-  if (msgs) {
-    const found = msgs.find(m => {
-      if (m.author?.id !== client.user.id) return false;
-      const e = m.embeds?.[0];
-      const footer = e?.footer?.text;
-      return footer === "VERIDIA_BOT_LIVE_STATUS";
-    });
-
-    if (found) {
-      liveMessageId = found.id;
-      await found.edit({ embeds: [embed] });
-      return found;
-    }
-  }
-
-  // Kalau gak ada, bikin baru
-  const sent = await channel.send({ embeds: [embed] });
-  liveMessageId = sent.id;
-  return sent;
-}
-
-async function postAnnounce(text) {
-  if (!cfg.ANNOUNCE_CHANNEL_ID) return; // opsional
-  const ch = await client.channels.fetch(cfg.ANNOUNCE_CHANNEL_ID).catch(() => null);
-  if (!ch) return;
-  await ch.send(text).catch(() => {});
-}
-
-async function updateLiveLoop() {
-  const channel = await client.channels.fetch(cfg.LIVE_CHANNEL_ID).catch(() => null);
-  if (!channel) {
-    console.error("LIVE_CHANNEL_ID not found / bot has no access");
-    return;
-  }
-
-  const info = await roblox.getUniverseInfo(cfg.UNIVERSE_ID);
-  const embed = makeStatusEmbed(info);
-  await getOrCreateLiveMessage(channel, embed);
-
-  // announce kalau berubah (optional)
-  if (lastPlaying !== null && info.playing !== lastPlaying) {
-    await postAnnounce(`📣 Online berubah: **${formatNumber(lastPlaying)}** → **${formatNumber(info.playing)}**`);
-  }
-  lastPlaying = info.playing;
-}
-
-function parseChannelId(token) {
-  // token bisa: <#123> atau 123
-  const t = String(token || "").trim();
-  const m = t.match(/^<#(\d+)>$/);
-  if (m) return m[1];
-  if (/^\d+$/.test(t)) return t;
-  return null;
-}
-
-async function handleCommand(message) {
-  const { PREFIX } = cfg;
-  if (!message.content.startsWith(PREFIX)) return;
-
-  const raw = message.content.slice(PREFIX.length).trim();
-  if (!raw) return;
-
-  const parts = raw.split(/\s+/);
-  const cmd = (parts.shift() || "").toLowerCase();
-
-  if (cmd === "help") {
-    return message.reply(
-      [
-        "**VERIDIA BOT Commands**",
-        "`;help` - list command",
-        "`;online` - cek online sekarang (players)",
-        "`;status` - status lengkap (online/visits/favorites/max players)",
-        "`;cekuser <username|userId>` - tampilkan profil Roblox",
-        "`;send #channel pesan...` - (OWNER) kirim pesan ke channel"
-      ].join("\n")
-    );
-  }
-
-  if (cmd === "online") {
-    const info = await roblox.getUniverseInfo(cfg.UNIVERSE_ID);
-    return message.reply(`🟢 Online sekarang di **${info.name}**: **${formatNumber(info.playing)}**`);
-  }
-
-  if (cmd === "status") {
-    const info = await roblox.getUniverseInfo(cfg.UNIVERSE_ID);
-    const embed = makeStatusEmbed(info);
-    return message.reply({ embeds: [embed] });
-  }
-
-  if (cmd === "cekuser") {
-    const q = parts.join(" ").trim();
-    if (!q) return message.reply("Pakai: `;cekuser <username atau userId>`");
-
-    try {
-      const u = await roblox.resolveUser(q);
-      const url = `https://www.roblox.com/users/${u.id}/profile`;
-
-      const e = new EmbedBuilder()
-        .setTitle(`👤 Roblox User: ${u.displayName} (@${u.name})`)
-        .setURL(url)
-        .addFields(
-          { name: "User ID", value: `\`${u.id}\``, inline: true },
-          { name: "Created", value: u.created ? `\`${u.created}\`` : "`unknown`", inline: true }
-        )
-        .setDescription(u.description ? u.description.slice(0, 300) : "—")
-        .setThumbnail(u.avatar || null)
-        .setFooter({ text: "VERIDIA_BOT_CEKUSER" })
-        .setTimestamp(new Date());
-
-      return message.reply({ embeds: [e] });
-    } catch (err) {
-      return message.reply(`❌ Gagal cek user: ${err.message}`);
-    }
-  }
-
-  if (cmd === "send") {
-    if (!isOwner(message.author.id)) {
-      return message.reply("❌ Command ini khusus OWNER.");
-    }
-
-    const chToken = parts.shift();
-    const channelId = parseChannelId(chToken);
-    if (!channelId) {
-      return message.reply("Pakai: `;send #channel pesan...`");
-    }
-
-    const text = parts.join(" ").trim();
-    if (!text) return message.reply("Pesannya kosong.");
-
-    const ch = await client.channels.fetch(channelId).catch(() => null);
-    if (!ch) return message.reply("Channel tidak ketemu / bot gak punya akses.");
-
-    await ch.send(text);
-    return message.reply("✅ Ke-send.");
-  }
-
-  // unknown command
-  return message.reply("Command gak dikenal. Coba `;help`.");
-}
-
-client.on("ready", async () => {
-  console.log(`Logged in as ${client.user.tag}`);
-
-  // run sekali pas start
-  await updateLiveLoop().catch(err => console.error("updateLiveLoop error:", err));
-
-  // loop auto update
-  setInterval(() => {
-    updateLiveLoop().catch(err => console.error("updateLiveLoop error:", err));
-  }, cfg.UPDATE_INTERVAL_MS);
 });
 
-client.on("messageCreate", async (message) => {
-  if (!message.guild) return;
-  if (message.author.bot) return;
-
+// ✅ Prefix commands
+client.on("messageCreate", async (msg) => {
   try {
-    await handleCommand(message);
+    if (!msg.guild) return;
+    if (msg.guild.id !== cfg.GUILD_ID) return;
+    if (msg.author.bot) return;
+
+    const content = msg.content.trim();
+    if (!content.startsWith(cfg.PREFIX)) return;
+
+    const args = content.slice(cfg.PREFIX.length).trim().split(/\s+/);
+    const cmd = (args.shift() || "").toLowerCase();
+
+    if (!cmd) return;
+
+    if (cmd === "help") {
+      return msg.reply(
+        [
+          "**Veridia Bot Commands**",
+          `\`${cfg.PREFIX}status\` → info map (online/visits/favorites)`,
+          `\`${cfg.PREFIX}online\` → jumlah online sekarang`,
+          `\`${cfg.PREFIX}cekuser <username>\` → cek profil Roblox`,
+          `\`${cfg.PREFIX}send #channel pesan...\` → (owner only) kirim pesan ke channel`,
+          "",
+          `Link: ${cfg.SITE_LINK}`
+        ].join("\n")
+      );
+    }
+
+    if (cmd === "status") {
+      const stats = await getUniverseStats(cfg.UNIVERSE_ID);
+      return msg.reply({ embeds: [statusEmbed(stats)] });
+    }
+
+    if (cmd === "online") {
+      const stats = await getUniverseStats(cfg.UNIVERSE_ID);
+      return msg.reply(`👥 Online sekarang di **${stats.name}**: **${fmt(stats.playing)}**`);
+    }
+
+    if (cmd === "cekuser") {
+      const q = args.join(" ").trim();
+      if (!q) return msg.reply(`Pakai: \`${cfg.PREFIX}cekuser <username>\``);
+
+      const basic = await getRobloxUserByUsername(q);
+      const prof = await getRobloxUserProfile(basic.id);
+      const headshot = await getRobloxHeadshot(basic.id);
+
+      const e = new EmbedBuilder()
+        .setTitle(`${basic.displayName} (@${basic.name})`)
+        .setURL(`https://www.roblox.com/users/${basic.id}/profile`)
+        .addFields(
+          { name: "User ID", value: `${basic.id}`, inline: true },
+          { name: "Created", value: prof.created ? `<t:${Math.floor(new Date(prof.created).getTime()/1000)}:R>` : "-", inline: true },
+          { name: "Description", value: prof.description?.slice(0, 200) || "(kosong)", inline: false }
+        )
+        .setThumbnail(headshot || null)
+        .setFooter({ text: "Roblox Profile" })
+        .setTimestamp(new Date());
+
+      return msg.reply({ embeds: [e] });
+    }
+
+    if (cmd === "send") {
+      if (!isOwner(msg)) return msg.reply("❌ Command ini khusus **Owner server**.");
+
+      const chRaw = args.shift();
+      if (!chRaw) return msg.reply(`Pakai: \`${cfg.PREFIX}send #channel pesan...\``);
+
+      const channelId = chRaw.replace(/[<#>]/g, "");
+      const channel = await msg.guild.channels.fetch(channelId).catch(() => null);
+      if (!channel?.isTextBased?.()) return msg.reply("❌ Channel ga valid.");
+
+      const text = args.join(" ").trim();
+      if (!text) return msg.reply("❌ Pesannya kosong.");
+
+      await channel.send(text);
+      return msg.reply("✅ Terkirim.");
+    }
+
+    return msg.reply(`Command ga ada. Coba \`${cfg.PREFIX}help\``);
   } catch (err) {
-    console.error("Command error:", err);
-    try { await message.reply(`❌ Error: ${err.message}`); } catch {}
+    console.error("[COMMAND ERROR]", err?.message || err);
+    return msg.reply("❌ Error. Cek logs Railway.");
   }
+});
+
+client.once("ready", async () => {
+  console.log(`✅ Logged in as ${client.user.tag}`);
+
+  // Start live loop (auto update + announce)
+  await startLiveLoop(client);
 });
 
 client.login(cfg.DISCORD_TOKEN);
