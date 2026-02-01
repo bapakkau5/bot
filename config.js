@@ -1,20 +1,37 @@
-require("dotenv").config();
-
+// config.js
 function must(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
+  if (!v || !String(v).trim()) {
+    throw new Error(`Missing env: ${name}`);
+  }
+  return String(v).trim();
 }
+
+function opt(name, fallback = "") {
+  const v = process.env[name];
+  return v ? String(v).trim() : fallback;
+}
+
+const OWNER_IDS = opt("OWNER_IDS", "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
 module.exports = {
   DISCORD_TOKEN: must("DISCORD_TOKEN"),
-  CLIENT_ID: must("CLIENT_ID"),
-  GUILD_ID: must("GUILD_ID"),
-  UNIVERSE_ID: must("UNIVERSE_ID"),
-  LIVE_CHANNEL_ID: must("LIVE_CHANNEL_ID"),
-  ANNOUNCE_CHANNEL_ID: must("ANNOUNCE_CHANNEL_ID"),
 
-  WEBSITE_URL: process.env.WEBSITE_URL || "https://gunungroblox.my.id/",
-  ROBLOX_URL: process.env.ROBLOX_URL || "https://www.roblox.com/",
-  DISCORD_INVITE: process.env.DISCORD_INVITE || ""
+  // Server & channel
+  GUILD_ID: must("GUILD_ID"),
+  LIVE_CHANNEL_ID: must("LIVE_CHANNEL_ID"),
+  ANNOUNCE_CHANNEL_ID: opt("ANNOUNCE_CHANNEL_ID", ""),
+
+  // Roblox
+  UNIVERSE_ID: must("UNIVERSE_ID"),
+
+  // Bot behavior
+  PREFIX: ";",
+  UPDATE_INTERVAL_MS: Number(opt("UPDATE_INTERVAL_MS", "60000")), // default 60 detik
+
+  // Owner-only
+  OWNER_IDS
 };
